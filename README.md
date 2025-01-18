@@ -41,4 +41,6 @@ This application does not require any configuration.
 npm run dev
 ```
 
-2. Open your browser and navigate to `http://localhost:3000` to view the application.
+2. Open your browser and navigate to `http://localhost:3000` to view the web application.
+
+3. The api is avaible at `http://localhost:3001/api/countries`

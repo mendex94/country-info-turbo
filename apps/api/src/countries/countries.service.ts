@@ -30,63 +30,22 @@ export class CountriesService {
   }
 
   findOne(id: string): Observable<DetailedCountry> {
-    const detailedCountryURL = `${this.configService.get<string>('NAGER_AT_API_BASE_URL')}/CountryInfo/${id}`;
-    const countryPopulationURL = `${this.configService.get<string>('COUNTRIES_NOW_API_BASE_URL')}/countries/population`;
-    const countryFlagURL = `${this.configService.get<string>('COUNTRIES_NOW_API_BASE_URL')}/countries/flag/images`;
+    const { detailedCountryURL, countryPopulationURL, countryFlagURL } =
+      this.getBaseURLs();
 
-    const detailedCountry$ = this.httpService
-      .get<DetailedCountry>(detailedCountryURL)
-      .pipe(
-        map((response: AxiosResponse<DetailedCountry>) => response.data),
-        catchError((error) => {
-          throw new HttpException(
-            'Error fetching country: ' + error.message,
-            500,
-          );
-        }),
-      );
+    const detailedCountry$ = this.getDetailedCountry(detailedCountryURL, id);
 
     return detailedCountry$.pipe(
       switchMap((detailedCountry) =>
         forkJoin({
-          populationCounts: this.httpService
-            .post<{ data: { populationCounts: PopulationCount[] } }>(
-              countryPopulationURL,
-              {
-                country: detailedCountry.commonName,
-              },
-            )
-            .pipe(
-              map(
-                (
-                  response: AxiosResponse<{
-                    data: { populationCounts: PopulationCount[] };
-                  }>,
-                ) => response.data.data.populationCounts,
-              ),
-              catchError((error) => {
-                throw new HttpException(
-                  'Error fetching population: ' + error.message,
-                  500,
-                );
-              }),
-            ),
-          flagUrl: this.httpService
-            .post<{ data: { flag: string } }>(countryFlagURL, {
-              iso2: detailedCountry.countryCode,
-            })
-            .pipe(
-              map(
-                (response: AxiosResponse<{ data: { flag: string } }>) =>
-                  response.data.data.flag,
-              ),
-              catchError((error) => {
-                throw new HttpException(
-                  'Error fetching flag: ' + error.message,
-                  500,
-                );
-              }),
-            ),
+          populationCounts: this.getCountryPopulation(
+            countryPopulationURL,
+            detailedCountry.commonName,
+          ),
+          flagUrl: this.getCountryFlag(
+            countryFlagURL,
+            detailedCountry.countryCode,
+          ),
         }).pipe(
           map(({ populationCounts, flagUrl }) => ({
             ...detailedCountry,
@@ -95,6 +54,54 @@ export class CountriesService {
           })),
         ),
       ),
+    );
+  }
+
+  private getBaseURLs() {
+    return {
+      detailedCountryURL: `${this.configService.get<string>('NAGER_AT_API_BASE_URL')}/CountryInfo`,
+      countryPopulationURL: `${this.configService.get<string>('COUNTRIES_NOW_API_BASE_URL')}/countries/population`,
+      countryFlagURL: `${this.configService.get<string>('COUNTRIES_NOW_API_BASE_URL')}/countries/flag/images`,
+    };
+  }
+
+  private getDetailedCountry(
+    url: string,
+    id: string,
+  ): Observable<DetailedCountry> {
+    return this.httpService.get<DetailedCountry>(`${url}/${id}`).pipe(
+      map((response) => response.data),
+      catchError((error) => this.handleHttpError('country', error)),
+    );
+  }
+
+  private getCountryPopulation(
+    url: string,
+    countryName: string,
+  ): Observable<PopulationCount[]> {
+    return this.httpService
+      .post<{
+        data: { populationCounts: PopulationCount[] };
+      }>(url, { country: countryName })
+      .pipe(
+        map((response) => response.data.data.populationCounts),
+        catchError((error) => this.handleHttpError('population', error)),
+      );
+  }
+
+  private getCountryFlag(url: string, countryCode: string): Observable<string> {
+    return this.httpService
+      .post<{ data: { flag: string } }>(url, { iso2: countryCode })
+      .pipe(
+        map((response) => response.data.data.flag),
+        catchError((error) => this.handleHttpError('flag', error)),
+      );
+  }
+
+  private handleHttpError(resource: string, error: any): never {
+    throw new HttpException(
+      `Error fetching ${resource}: ${error.message}`,
+      500,
     );
   }
 }

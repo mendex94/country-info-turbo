@@ -1,6 +1,6 @@
 import { HttpService } from '@nestjs/axios';
 import { HttpException, Injectable } from '@nestjs/common';
-import { catchError, firstValueFrom, map, Observable } from 'rxjs';
+import { catchError, forkJoin, map, Observable, switchMap } from 'rxjs';
 import { AxiosResponse } from 'axios';
 import {
   Country,
@@ -29,11 +29,14 @@ export class CountriesService {
     );
   }
 
-  async findOne(id: string): Promise<DetailedCountry> {
+  findOne(id: string): Observable<DetailedCountry> {
     const detailedCountryURL = `${this.configService.get<string>('NAGER_AT_API_BASE_URL')}/CountryInfo/${id}`;
+    const countryPopulationURL = `${this.configService.get<string>('COUNTRIES_NOW_API_BASE_URL')}/countries/population`;
+    const countryFlagURL = `${this.configService.get<string>('COUNTRIES_NOW_API_BASE_URL')}/countries/flag/images`;
 
-    const detailedCountry$ = await firstValueFrom(
-      this.httpService.get<DetailedCountry>(detailedCountryURL).pipe(
+    const detailedCountry$ = this.httpService
+      .get<DetailedCountry>(detailedCountryURL)
+      .pipe(
         map((response: AxiosResponse<DetailedCountry>) => response.data),
         catchError((error) => {
           throw new HttpException(
@@ -41,65 +44,57 @@ export class CountriesService {
             500,
           );
         }),
+      );
+
+    return detailedCountry$.pipe(
+      switchMap((detailedCountry) =>
+        forkJoin({
+          populationCounts: this.httpService
+            .post<{ data: { populationCounts: PopulationCount[] } }>(
+              countryPopulationURL,
+              {
+                country: detailedCountry.commonName,
+              },
+            )
+            .pipe(
+              map(
+                (
+                  response: AxiosResponse<{
+                    data: { populationCounts: PopulationCount[] };
+                  }>,
+                ) => response.data.data.populationCounts,
+              ),
+              catchError((error) => {
+                throw new HttpException(
+                  'Error fetching population: ' + error.message,
+                  500,
+                );
+              }),
+            ),
+          flagUrl: this.httpService
+            .post<{ data: { flag: string } }>(countryFlagURL, {
+              iso2: detailedCountry.countryCode,
+            })
+            .pipe(
+              map(
+                (response: AxiosResponse<{ data: { flag: string } }>) =>
+                  response.data.data.flag,
+              ),
+              catchError((error) => {
+                throw new HttpException(
+                  'Error fetching flag: ' + error.message,
+                  500,
+                );
+              }),
+            ),
+        }).pipe(
+          map(({ populationCounts, flagUrl }) => ({
+            ...detailedCountry,
+            populationCounts,
+            flagUrl,
+          })),
+        ),
       ),
     );
-
-    const countryPopulationURL = `${this.configService.get<string>('COUNTRIES_NOW_API_BASE_URL')}/countries/population`;
-
-    const countryPopulation$ = await firstValueFrom(
-      this.httpService
-        .post<{
-          data: {
-            populationCounts: PopulationCount[];
-          };
-        }>(countryPopulationURL, {
-          country: detailedCountry$.commonName,
-        })
-        .pipe(
-          map(
-            (
-              response: AxiosResponse<{
-                data: {
-                  populationCounts: PopulationCount[];
-                };
-              }>,
-            ) => {
-              return response.data.data.populationCounts;
-            },
-          ),
-          catchError((error) => {
-            throw new HttpException(
-              'Error fetching population: ' + error.message,
-              500,
-            );
-          }),
-        ),
-    );
-
-    const countryFlagURL = `${this.configService.get<string>('COUNTRIES_NOW_API_BASE_URL')}/countries/flag/images`;
-
-    const countryFlag$ = await firstValueFrom(
-      this.httpService
-        .post<{ data: { flag: string } }>(countryFlagURL, {
-          iso2: detailedCountry$.countryCode,
-        })
-        .pipe(
-          map((response: AxiosResponse<{ data: { flag: string } }>) => {
-            return response.data.data.flag;
-          }),
-          catchError((error) => {
-            throw new HttpException(
-              'Error fetching flag: ' + error.message,
-              500,
-            );
-          }),
-        ),
-    );
-
-    return {
-      ...detailedCountry$,
-      populationCounts: countryPopulation$,
-      flagUrl: countryFlag$,
-    };
   }
 }
